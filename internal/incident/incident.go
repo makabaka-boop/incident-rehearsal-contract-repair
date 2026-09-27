@@ -506,7 +506,9 @@ func (in *Incident) SimulateShutdown(closedIndices []int64) (Simulation, error) 
 	for v := 0; v < in.spec.N; v++ {
 		b, bok := baseline[v]
 		s, sok := shutdown[v]
-		if bok && sok && b == s {
+		if bok == sok && (!bok || b == s) {
+			// Same arrival in both plans, or unreachable under both:
+			// neither counts as a change.
 			continue
 		}
 		change := ArrivalChange{Node: v}

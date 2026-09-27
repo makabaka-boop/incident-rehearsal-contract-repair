@@ -32,15 +32,19 @@ type CreateIncidentRequest struct {
 }
 
 // AdvanceRequest is the payload accepted by POST /incidents/{id}/advance.
+// Minute is a pointer so a missing field or an explicit null is rejected
+// instead of silently decoding to minute 0 and committing the clock.
 type AdvanceRequest struct {
-	Minute int64 `json:"minute"`
+	Minute *int64 `json:"minute"`
 }
 
 // SimulateRequest is the payload accepted by
 // POST /incidents/{id}/simulate: the creation-time zero-based pipe indices
-// to hypothetically close immediately.
+// to hypothetically close immediately. The pointer shapes make a missing
+// field, an explicit null list and null elements rejectable instead of
+// silently rehearsing an empty closure or decoding null as pipe 0.
 type SimulateRequest struct {
-	ClosedPipes []int64 `json:"closed_pipes"`
+	ClosedPipes *[]*int64 `json:"closed_pipes"`
 }
 
 // ArrivalChangeDTO describes one node's earliest arrival minute under the
@@ -184,12 +188,18 @@ func (s *server) handleAdvance(w http.ResponseWriter, r *http.Request) {
 	if !decodeStrict(w, r, &req) {
 		return
 	}
-	if req.Minute < 0 {
+	if req.Minute == nil {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_input",
-			fmt.Sprintf("minute must be >= 0, got %d", req.Minute))
+			"minute is required and must be an integer")
 		return
 	}
-	newArrivals, snap, err := in.Advance(req.Minute)
+	minute := *req.Minute
+	if minute < 0 {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_input",
+			fmt.Sprintf("minute must be >= 0, got %d", minute))
+		return
+	}
+	newArrivals, snap, err := in.Advance(minute)
 	if err != nil {
 		var ce *incident.ConflictError
 		detail := err.Error()
@@ -232,11 +242,20 @@ func (s *server) handleSimulate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.ClosedPipes == nil {
-		// A missing field is the same as an explicit empty list: rehearse
-		// with no pipes closed.
-		req.ClosedPipes = []int64{}
+		writeError(w, http.StatusUnprocessableEntity, "invalid_input",
+			"closed_pipes is required and must be an array of pipe indices")
+		return
 	}
-	sim, err := in.SimulateShutdown(req.ClosedPipes)
+	closedIndices := make([]int64, 0, len(*req.ClosedPipes))
+	for i, p := range *req.ClosedPipes {
+		if p == nil {
+			writeError(w, http.StatusUnprocessableEntity, "invalid_input",
+				fmt.Sprintf("closed_pipes[%d] must be an integer pipe index, got null", i))
+			return
+		}
+		closedIndices = append(closedIndices, *p)
+	}
+	sim, err := in.SimulateShutdown(closedIndices)
 	if err != nil {
 		var ve *incident.ValidationError
 		if errors.As(err, &ve) {

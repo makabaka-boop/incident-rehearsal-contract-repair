@@ -182,8 +182,9 @@ DRAIN_TIMEOUT=10s API_PORT=8080 go run ./cmd/api
 - 并发推进由每事件互斥锁串行化：各请求只能按提交顺序单调生效，已被更新的时钟
   拒绝；所有失败都不会改变快照。
 
-错误码：非法拓扑/非法请求体为稳定 `422`（`invalid_input` / `invalid_json`）；
-未知事件为 `404`（`not_found`）；冲突为稳定 `409`（`clock_regression` /
+错误码：非法拓扑/非法请求体为稳定 `422`（`invalid_input` / `invalid_json`，
+`minute` 缺失或为 `null` 同样拒绝且不会提交时钟）；未知事件为 `404`
+（`not_found`）；冲突为稳定 `409`（`clock_regression` /
 `past_deadline` / `incident_terminal`）。错误体均为统一的
 `{"error":{"code":...,"message":...}}`。
 
@@ -264,8 +265,9 @@ curl -s -X POST http://localhost:8080/incidents/<id>/advance \
   `contained`）；`protected=true` 表示关管方案下所有取水口在截止前均未
   被触达。
 
-错误：未知事件 `404 not_found`；重复/越界下标 `422 invalid_input`（畸形
-JSON 为 `422 invalid_json`）；事件已到终态（`breached` / `contained`）
+错误：未知事件 `404 not_found`；重复/越界下标、`closed_pipes` 缺失或为
+`null`、数组含 `null` 元素均为 `422 invalid_input`（畸形 JSON 为
+`422 invalid_json`）；事件已到终态（`breached` / `contained`）
 返回 `409 incident_terminal`。所有拒绝都不会改变事件。
 
 ```bash

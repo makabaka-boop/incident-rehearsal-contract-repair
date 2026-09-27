@@ -182,6 +182,36 @@ func TestSimulateRejectsDuplicateAndOutOfRange(t *testing.T) {
 	}
 }
 
+func TestSimulateRejectsMissingOrNullClosure(t *testing.T) {
+	mux := NewMux()
+	id := mustCreate(t, mux,
+		`{"n":2,"pipes":[{"from":0,"to":1,"minutes":1}],"releases":[{"node":0,"at":0}],"intakes":[1],"deadline":5}`)
+	for _, tc := range []struct{ name, body string }{
+		{"missing closed_pipes", `{}`},
+		{"null closed_pipes", `{"closed_pipes":null}`},
+		{"null element", `{"closed_pipes":[null]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st, resp := simulate(t, mux, id, tc.body)
+			if st != http.StatusUnprocessableEntity {
+				t.Fatalf("status=%d want 422 body=%v", st, resp)
+			}
+			errObj := resp["error"].(map[string]any)
+			if errObj["code"] == "" || errObj["message"] == "" {
+				t.Fatalf("incomplete error: %v", errObj)
+			}
+		})
+	}
+	// An explicit empty list stays a valid rehearsal with no changes.
+	st, resp := simulate(t, mux, id, `{"closed_pipes":[]}`)
+	if st != http.StatusOK {
+		t.Fatalf("empty closure status=%d body=%v", st, resp)
+	}
+	if len(resp["changes"].([]any)) != 0 {
+		t.Fatalf("empty closure produced changes: %v", resp["changes"])
+	}
+}
+
 func TestSimulateTerminalConflict(t *testing.T) {
 	mux := NewMux()
 	id := mustCreate(t, mux,

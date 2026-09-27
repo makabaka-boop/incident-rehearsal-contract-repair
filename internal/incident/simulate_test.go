@@ -189,6 +189,32 @@ func TestSimulateSelfLoopClosureIsHarmless(t *testing.T) {
 	}
 }
 
+func TestSimulateUnreachableInBothPlansIsNotAChange(t *testing.T) {
+	// Nodes 2 and 3 have no incoming path at all: unreachable in the
+	// baseline and unreachable under any closure, so they must never be
+	// listed as changed.
+	spec := Spec{
+		N:        4,
+		Pipes:    []Pipe{{0, 1, 2}},
+		Releases: []Release{{0, 0}},
+		Intakes:  []int{1},
+		Deadline: 10,
+	}
+	in := mustIncident(t, spec)
+	mustAdvance(t, in, 0)
+	sim := mustSimulate(t, in, 0)
+	if len(sim.Changes) != 1 || sim.Changes[0].Node != 1 ||
+		sim.Changes[0].Baseline == nil || *sim.Changes[0].Baseline != 2 ||
+		sim.Changes[0].Shutdown != nil {
+		t.Fatalf("changes=%+v, want exactly node 1 baseline 2 -> null", sim.Changes)
+	}
+	for _, c := range sim.Changes {
+		if c.Baseline == nil && c.Shutdown == nil {
+			t.Fatalf("node %d unreachable in both plans listed as changed: %+v", c.Node, c)
+		}
+	}
+}
+
 func TestSimulateFutureReleaseStillSeeds(t *testing.T) {
 	// Pipe 0: 0->1 in 5; pipe 1: 2->1 in 1. Releases 0@2 and 2@8.
 	// Intake 1, deadline 20. At minute 1 both releases are still in the
