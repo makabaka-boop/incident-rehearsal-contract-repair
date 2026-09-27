@@ -182,6 +182,30 @@ func TestSimulateRejectsDuplicateAndOutOfRange(t *testing.T) {
 	}
 }
 
+// TestSimulateRequiresClosedPipes rejects bodies without an explicit
+// closed_pipes array: a missing field, an explicit null or a whole-body
+// null must not be rehearsed as an empty shutdown plan.
+func TestSimulateRequiresClosedPipes(t *testing.T) {
+	mux := NewMux()
+	id := mustCreate(t, mux,
+		`{"n":2,"pipes":[{"from":0,"to":1,"minutes":1}],"releases":[{"node":0,"at":0}],"intakes":[1],"deadline":5}`)
+	for _, body := range []string{`{}`, `{"closed_pipes":null}`, `null`} {
+		st, resp := simulate(t, mux, id, body)
+		if st != http.StatusUnprocessableEntity {
+			t.Fatalf("body=%s status=%d want 422 resp=%v", body, st, resp)
+		}
+		errObj := resp["error"].(map[string]any)
+		if errObj["code"] != "invalid_input" {
+			t.Fatalf("body=%s error=%v, want invalid_input", body, errObj)
+		}
+	}
+	// An explicit empty list stays a valid rehearsal of "close nothing".
+	st, resp := simulate(t, mux, id, `{"closed_pipes":[]}`)
+	if st != http.StatusOK {
+		t.Fatalf("explicit empty closure: status=%d body=%v", st, resp)
+	}
+}
+
 func TestSimulateTerminalConflict(t *testing.T) {
 	mux := NewMux()
 	id := mustCreate(t, mux,

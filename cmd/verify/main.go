@@ -315,7 +315,8 @@ func verifyShutdownSimulation() {
 	pass("simulate: in-transit payload keeps its original traversal time")
 
 	// Duplicate and out-of-range pipe indices are stable 422s; a malformed
-	// body is rejected the same way.
+	// body — including one without an explicit closed_pipes array — is
+	// rejected the same way.
 	expect422Raw("simulate: duplicate pipe index", "/incidents/"+id+"/simulate",
 		[]byte(`{"closed_pipes":[0,0]}`))
 	expect422Raw("simulate: pipe index out of range", "/incidents/"+id+"/simulate",
@@ -324,6 +325,10 @@ func verifyShutdownSimulation() {
 		[]byte(`{"closed_pipes":[-1]}`))
 	expect422Raw("simulate: malformed body", "/incidents/"+id+"/simulate",
 		[]byte(`{"closed_pipes":[0,`))
+	expect422Raw("simulate: missing closed_pipes", "/incidents/"+id+"/simulate",
+		[]byte(`{}`))
+	expect422Raw("simulate: null closed_pipes", "/incidents/"+id+"/simulate",
+		[]byte(`{"closed_pipes":null}`))
 
 	// Unknown event -> stable 404.
 	status, body := simulate("inc_does_not_exist", []int64{0})
@@ -354,6 +359,57 @@ func verifyShutdownSimulation() {
 		return
 	}
 	pass("simulate: terminal event rejects rehearsals with a stable 409")
+}
+
+// verifyChangesExcludeUnreachable checks the changes-list contract on a
+// topology with isolated nodes: a node that neither the baseline nor the
+// shutdown plan reaches by the deadline has no arrival time at all, so it
+// must never appear in changes (it would be a meaningless null/null entry).
+func verifyChangesExcludeUnreachable() {
+	// Nodes 2 and 3 (the intake) are isolated: no release and no incoming
+	// pipe reaches them under any plan.
+	req := incidentRequest{
+		N:        4,
+		Pipes:    []pipe{{0, 1, 1}, {2, 1, 1}},
+		Releases: []release{{0, 0}},
+		Intakes:  []int64{3},
+		Deadline: 5,
+	}
+	id := createIncident("simulate: create event with isolated nodes", req)
+	if id == "" {
+		return
+	}
+	if !checkStep("simulate: advance into the in-transit window", id, 1, "propagating",
+		[]arrival{{0, 0}, {1, 1}}) {
+		return
+	}
+	// Closing pipe 0 at minute 1 cannot recall the in-flight payload, so
+	// both plans agree everywhere: the changes list must be empty rather
+	// than carry null/null entries for the unreachable nodes 2 and 3.
+	resp := mustSimulate("simulate: in-transit closure on isolated topology", id, []int64{0})
+	if len(resp.Changes) != 0 {
+		fail("simulate: unreachable nodes excluded from changes", "changes=%+v, want []", resp.Changes)
+		return
+	}
+	pass("simulate: nodes unreachable in both plans never appear in changes")
+
+	// A pre-departure closure changes node 1 only; nodes 2 and 3 stay out.
+	id2 := createIncident("simulate: create second event with isolated nodes", req)
+	if id2 == "" {
+		return
+	}
+	if !checkStep("simulate: second event commits to minute 0", id2, 0, "propagating",
+		[]arrival{{0, 0}}) {
+		return
+	}
+	resp = mustSimulate("simulate: pre-departure closure on isolated topology", id2, []int64{0})
+	want := []arrivalChange{{Node: 1, Baseline: i64(1)}}
+	if !changesEqual(resp.Changes, want) {
+		fail("simulate: pre-departure closure changes",
+			"changes=%+v, want exactly node 1 baseline 1 -> null", resp.Changes)
+		return
+	}
+	pass("simulate: changes list carries exactly the affected node")
 }
 
 var failures int
@@ -785,7 +841,12 @@ func verifyErrors() {
 	if id != "" {
 		expect422Raw("incident: non-integer advance minute", "/incidents/"+id+"/advance",
 			[]byte(`{"minute":1.5}`))
-		// Failed request left the clock untouched.
+		expect422Raw("incident: advance body without minute", "/incidents/"+id+"/advance",
+			[]byte(`{}`))
+		expect422Raw("incident: advance minute explicitly null", "/incidents/"+id+"/advance",
+			[]byte(`{"minute":null}`))
+		// Failed requests left the clock untouched: the first legal advance
+		// still reports the full increment from minute 0.
 		checkStep("incident: snapshot unchanged after invalid advance", id, 2, "propagating",
 			[]arrival{{0, 0}, {1, 1}})
 	}
@@ -1074,6 +1135,7 @@ func main() {
 	verifyContained()
 	verifyMultiSource()
 	verifyShutdownSimulation()
+	verifyChangesExcludeUnreachable()
 	verifyErrors()
 	verifyConcurrentAdvances()
 	verifyLargeIncident()

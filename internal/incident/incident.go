@@ -506,6 +506,9 @@ func (in *Incident) SimulateShutdown(closedIndices []int64) (Simulation, error) 
 	for v := 0; v < in.spec.N; v++ {
 		b, bok := baseline[v]
 		s, sok := shutdown[v]
+		if !bok && !sok {
+			continue // neither plan reaches the node: nothing changed
+		}
 		if bok && sok && b == s {
 			continue
 		}

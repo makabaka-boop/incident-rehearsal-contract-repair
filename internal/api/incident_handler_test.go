@@ -241,6 +241,34 @@ func TestAdvanceMalformedBody422(t *testing.T) {
 	}
 }
 
+// TestAdvanceRequiresMinute rejects bodies without an integer minute: a
+// missing field, an explicit null or a whole-body null must never be
+// accepted as minute 0, because that would silently commit the clock.
+func TestAdvanceRequiresMinute(t *testing.T) {
+	mux := NewMux()
+	id := mustCreate(t, mux,
+		`{"n":2,"pipes":[{"from":0,"to":1,"minutes":1}],"releases":[{"node":0,"at":0}],"intakes":[1],"deadline":5}`)
+	for _, body := range []string{`{}`, `{"minute":null}`, `null`} {
+		st, resp := advance(t, mux, id, body)
+		if st != http.StatusUnprocessableEntity {
+			t.Fatalf("body=%s status=%d want 422 resp=%v", body, st, resp)
+		}
+		errObj := resp["error"].(map[string]any)
+		if errObj["code"] != "invalid_input" {
+			t.Fatalf("body=%s error=%v, want invalid_input", body, errObj)
+		}
+	}
+	// The rejections committed nothing: the event is still unstarted, so a
+	// regular advance to minute 1 reports the full increment from scratch.
+	st, resp := advance(t, mux, id, `{"minute":1}`)
+	if st != http.StatusOK {
+		t.Fatalf("advance after rejections: status=%d body=%v", st, resp)
+	}
+	if got := resp["new_arrivals"].([]any); len(got) != 2 {
+		t.Fatalf("new_arrivals=%v, want both nodes (clock must not have moved)", got)
+	}
+}
+
 func TestIncidentMethodNotAllowed(t *testing.T) {
 	rec := httptest.NewRecorder()
 	NewMux().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/incidents", nil))

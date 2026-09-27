@@ -143,9 +143,10 @@ DRAIN_TIMEOUT=10s API_PORT=8080 go run ./cmd/api
 
 ### `POST /incidents/{id}/advance`
 
-把事件时钟推进到请求分钟（请求体 `{"minute": 5}`），原子地提交**时钟校验、
-到达增量与状态跃迁**，返回本次首次到达的节点（`new_arrivals`，按到达分钟再按
-节点排序）与最新快照：
+把事件时钟推进到请求分钟（请求体 `{"minute": 5}`；`minute` 必须显式给出且为
+整数——缺失、为 `null` 或为非整数一律 `422`，绝不会被当作分钟 0 提交），原子地
+提交**时钟校验、到达增量与状态跃迁**，返回本次首次到达的节点（`new_arrivals`，
+按到达分钟再按节点排序）与最新快照：
 
 ```json
 {
@@ -216,7 +217,8 @@ curl -s -X POST http://localhost:8080/incidents/<id>/advance \
 
 **只读关管预演**：在事件推进到的当前分钟，预演"立即关闭若干条管道"能否
 保护重点取水口。请求体 `closed_pipes` 为创建事件时的管道**下标**（0 起，
-按 `pipes` 数组顺序；重复或越界下标返回 `422`）：
+按 `pipes` 数组顺序；字段缺失或为 `null`、重复或越界下标均返回 `422`，
+显式空数组 `[]` 是合法的"不关管"预演）：
 
 ```json
 {"closed_pipes": [1, 3]}
@@ -258,15 +260,17 @@ curl -s -X POST http://localhost:8080/incidents/<id>/advance \
 - `baseline_arrivals` / `shutdown_arrivals`：原方案与关管方案在**截止分钟
   及之前**的各节点最早到达（不可达节点不出现）；
 - `changes`：到达时间发生变化的节点，按节点编号升序；`baseline` /
-  `shutdown` 为 `null` 表示该方案在截止前不可达；
+  `shutdown` 为 `null` 表示该方案在截止前不可达（两套方案都不可达的节点
+  没有到达时间可言，不会出现在 `changes` 中）；
 - `intakes`：每个重点取水口的到达分钟与是否被触达结论；
 - `baseline_status` / `shutdown_status`：两方案的截止结论（`breached` /
   `contained`）；`protected=true` 表示关管方案下所有取水口在截止前均未
   被触达。
 
-错误：未知事件 `404 not_found`；重复/越界下标 `422 invalid_input`（畸形
-JSON 为 `422 invalid_json`）；事件已到终态（`breached` / `contained`）
-返回 `409 incident_terminal`。所有拒绝都不会改变事件。
+错误：未知事件 `404 not_found`；`closed_pipes` 缺失/为 `null`、重复/越界
+下标 `422 invalid_input`（畸形 JSON 为 `422 invalid_json`）；事件已到终态
+（`breached` / `contained`）返回 `409 incident_terminal`。所有拒绝都不会
+改变事件。
 
 ```bash
 curl -s -X POST http://localhost:8080/incidents/<id>/simulate \

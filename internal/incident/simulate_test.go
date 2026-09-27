@@ -260,6 +260,48 @@ func TestSimulateDeadlineBoundary(t *testing.T) {
 	}
 }
 
+// TestSimulateChangesExcludeUnreachableNodes pins down the changes-list
+// contract: a node that neither plan reaches by the deadline has no arrival
+// time at all, so it must not appear as an arrival-time change (it would
+// serialise as a meaningless {baseline: null, shutdown: null} entry).
+func TestSimulateChangesExcludeUnreachableNodes(t *testing.T) {
+	// Nodes 2 and 3 (the intake) are isolated: no release and no incoming
+	// pipe ever reaches them, under the baseline or any shutdown plan.
+	spec := Spec{
+		N:        4,
+		Pipes:    []Pipe{{0, 1, 1}, {2, 1, 1}},
+		Releases: []Release{{0, 0}},
+		Intakes:  []int{3},
+		Deadline: 5,
+	}
+	in := mustIncident(t, spec)
+	mustAdvance(t, in, 1)
+
+	// Closing pipe 0 at minute 1 cannot recall the in-flight payload, so
+	// both plans agree everywhere; the changes list must be empty rather
+	// than carry null/null entries for the unreachable nodes.
+	sim := mustSimulate(t, in, 0)
+	if len(sim.Changes) != 0 {
+		t.Fatalf("unreachable nodes leaked into changes: %+v", sim.Changes)
+	}
+
+	// A closure that does change node 1 (rehearsed before the departure)
+	// lists exactly that node — still no null/null entries for nodes 2/3.
+	fresh := mustIncident(t, spec)
+	mustAdvance(t, fresh, 0)
+	sim2 := mustSimulate(t, fresh, 0)
+	if len(sim2.Changes) != 1 {
+		t.Fatalf("changes=%+v, want exactly the node-1 entry", sim2.Changes)
+	}
+	c := sim2.Changes[0]
+	if c.Node != 1 || c.Baseline == nil || *c.Baseline != 1 || c.Shutdown != nil {
+		t.Fatalf("change=%+v, want node 1 baseline 1 -> null", c)
+	}
+	if changeFor(sim2, 2) != nil || changeFor(sim2, 3) != nil {
+		t.Fatalf("nodes unreachable in both plans appeared in changes: %+v", sim2.Changes)
+	}
+}
+
 func TestSimulateRejectsBadIndices(t *testing.T) {
 	spec := Spec{
 		N:        3,
